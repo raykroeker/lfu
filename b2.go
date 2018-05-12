@@ -1,3 +1,4 @@
+// https://www.backblaze.com/b2/docs/large_files.html
 package main
 
 import (
@@ -34,6 +35,7 @@ var options struct {
 	bucket      string
 	contentType string
 	debug       bool
+	trace       bool
 	file        string
 	buffer      int
 }
@@ -41,6 +43,7 @@ var options struct {
 var (
 	debugL = log.New(os.Stdout, "DEBUG: ", log.LstdFlags)
 	errL   = log.New(os.Stdout, "  ERR: ", log.LstdFlags)
+	traceL = log.New(os.Stdout, "TRACE: ", log.LstdFlags)
 )
 
 func init() {
@@ -53,6 +56,7 @@ func main() {
 	flag.StringVar(&options.bucket, "bucket", "", "The bucket into which the file will be uploaded.")
 	flag.StringVar(&options.contentType, "content-type", "", "The file content (mime) type.")
 	flag.BoolVar(&options.debug, "debug", false, "Enable debug logging.")
+	flag.BoolVar(&options.trace, "trace", false, "Enable trace logging.")
 	flag.StringVar(&options.file, "path", "", "File to upload.")
 	flag.IntVar(&options.buffer, "buffer", 1024*1024*128, "Read file buffer size.")
 	flag.Parse()
@@ -136,7 +140,7 @@ func upload(b2 *B2) error {
 			select {
 			case chunk, ok := <-uploads:
 				if !ok {
-					debugL.Printf("trace: uploads closed")
+					traceL.Printf("uploads closed")
 					ticker.Stop()
 				}
 				if chunk.FileStats.Offset > stats.Offset {
@@ -144,7 +148,7 @@ func upload(b2 *B2) error {
 				}
 			case _, ok := <-ticker.C:
 				if !ok {
-					debugL.Printf("trace: handle ticker closed")
+					traceL.Printf("ticker stopped (closed)")
 					return
 				}
 				if stats.Offset > 0 {
@@ -152,7 +156,6 @@ func upload(b2 *B2) error {
 				}
 			}
 		}
-		debugL.Printf("trace: logger exit")
 	}()
 
 	chunks := make(chan FileChunk, fr.Size/int64(fr.BufferSize))
@@ -163,13 +166,13 @@ func upload(b2 *B2) error {
 			defer wg.Done()
 			err := b2.GetUploadPartURL()
 			if err != nil {
-				errL.Panicf("Unable to get upload url: thread_id=%d: %v", tid, err)
+				errL.Panicf("unable to get upload url: thread_id=%d: %v", tid, err)
 			}
 			for {
 				select {
 				case chunk, ok := <-chunks:
 					if !ok {
-						debugL.Printf("trace: handle chunks closed")
+						traceL.Printf("chunks closed")
 						return
 					}
 					err := b2.UploadPart()
@@ -179,7 +182,6 @@ func upload(b2 *B2) error {
 					uploads <- chunk
 				}
 			}
-			debugL.Printf("trace: worker:%d exit", tid)
 		}(i)
 	}
 
@@ -187,14 +189,11 @@ func upload(b2 *B2) error {
 	if err != nil {
 		return err
 	}
-	debugL.Printf("trace: chunks read")
+	traceL.Printf("file read (%s)", fmtB(fr.Size))
 	close(chunks)
-	debugL.Printf("trace: chunks closed")
 
 	wg.Wait()
-	debugL.Printf("trace: workers complete")
 	close(uploads)
-	debugL.Printf("trace: uploads closed")
 
 	return nil
 }
@@ -257,13 +256,13 @@ func (b2 *B2) AuthorizeAccount() error {
 	if err != nil {
 		return err
 	}
-	debugL.Printf("%s:%s:%d %s", http.MethodGet, b2.url("b2_authorize_account"), httpResp.StatusCode, httpResp.Status)
+	traceL.Printf("%s:%s:%d %s", http.MethodGet, b2.url("b2_authorize_account"), httpResp.StatusCode, httpResp.Status)
 	defer httpResp.Body.Close()
 	out, err := ioutil.ReadAll(httpResp.Body)
 	if err != nil {
 		return err
 	}
-	debugL.Printf("%s:%s:%s", http.MethodGet, b2.url("b2_authorize_account"), out)
+	traceL.Printf("%s:%s:%s", http.MethodGet, b2.url("b2_authorize_account"), out)
 	err = json.Unmarshal(out, &b2.AuthorizeAccountResp)
 	if err != nil {
 		return err
@@ -315,7 +314,7 @@ func (b2 *B2) doRequest(method string, endpoint string, req interface{}, resp in
 	if err != nil {
 		return err
 	}
-	debugL.Printf("%s:%d %s", id(), httpResp.StatusCode, httpResp.Status)
+	traceL.Printf("%s:%d %s", id(), httpResp.StatusCode, httpResp.Status)
 	if resp != nil {
 		defer httpResp.Body.Close()
 		out, err := ioutil.ReadAll(httpResp.Body)
@@ -396,7 +395,7 @@ func (fr *FileReader) Read(chunk chan<- FileChunk) error {
 			if err == io.EOF {
 				break
 			}
-			log.Panicf("err reading file: %s:%d %v", fr.Path, fr.Offset, err)
+			errL.Panicf("err reading file: %s:%d %v", fr.Path, fr.Offset, err)
 		}
 		fr.Offset += int64(bytesRead)
 		number++
