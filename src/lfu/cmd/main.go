@@ -19,8 +19,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/cheggaaa/pb"
 )
 
 const (
@@ -102,8 +100,6 @@ func main() {
 }
 
 func copy(path string) error {
-	bar := pb.New(1)
-
 	t, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err

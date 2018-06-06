@@ -1,25 +1,39 @@
-export GOPATH=$(shell pwd)
-DEPLOY=/Volumes/Public
-SRC=b2.go
+BIN     := lfu
+PKG     := lfu
+ROOT    := $(shell pwd)
+SRC     := $(shell find src -type f)
+VERSION := 0.0.1
+
+GOPATH  := $(ROOT)
+LDFLAGS := "-X main.version=$(VERSION)"
+VENDOR  := "src/vendor"
+
+PHONY: _env get
+
+_env:
+	env
 
 clean:
 	@rm -rf bin/
 
-vendor/github.com/cheggaaa/pb:
-	git clone git@github.com:cheggaaa/pb vendor/github.com/cheggaaa/pb
-	git --git-dir vendor/github.com/cheggaaa/pb/.git checkout 2af8bbdea9e99e83b3ac400d8f6b6d1b8cbbf338
+src/vendor/golang.org/x/sys:
+	git clone git@github.com:golang/sys src/vendor/golang.org/x/sys
+	git --git-dir src/vendor/golang.org/x/sys/.git checkout c11f84a56e43e20a78cee75a7c034031ecf57d1f
 
-get: vendor/github.com/cheggaaa/pb
+src/vendor/github.com/mattn/go-runewidth:
+	git clone git@github.com:mattn/go-runewidth src/vendor/github.com/mattn/go-runewidth
+	git --git-dir src/vendor/github.com/mattn/go-runewidth/.git checkout ce7b0b5c7b45a81508558cd1dba6bb1e4ddb51bb
 
-bin/darwin/b2:
-	@GOOS=darwin go build -o bin/darwin/b2 b2.go
+src/vendor/github.com/cheggaaa/pb:
+	git clone git@github.com:cheggaaa/pb src/vendor/github.com/cheggaaa/pb
+	git --git-dir src/vendor/github.com/cheggaaa/pb/.git checkout 2af8bbdea9e99e83b3ac400d8f6b6d1b8cbbf338
 
-bin/linux/b2:
-	@GOOS=linux go build -o bin/linux/b2 b2.go
+get: src/vendor/golang.org/x/sys src/vendor/github.com/mattn/go-runewidth src/vendor/github.com/cheggaaa/pb
 
-build: get bin/darwin/b2 bin/linux/b2
+bin/darwin/$(BIN):
+	@GOPATH=$(GOPATH) GOOS=darwin go build -o bin/darwin/$(BIN) $(PKG)/...
 
-/Volumes/Public/b2:
-	@cp -v bin/linux/b2 /Volumes/Public/b2
+bin/linux/$(BIN):
+	@GOPATH=$(GOPATH) GOOS=linux go build -o bin/linux/$(BIN) $(PKG)/...
 
-deploy: /Volumes/Public/b2
+build: bin/darwin/$(BIN) bin/linux/$(BIN)
