@@ -4,6 +4,11 @@ import (
 	"fmt"
 	"lfu"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/cheggaaa/pb"
 )
 
 // CopyOpts.
@@ -66,6 +71,28 @@ func Copy(rpath, wpath string, opts *CopyOpts) error {
 	}
 	defer r.Close()
 
+	prefix := fmt.Sprintf("%s x %d (%s) %s ",
+		FmtB(int64(opts.Batch)),
+		opts.Buffer,
+		strings.TrimSpace(FmtB(r.Size)),
+		filepath.Base(rpath))
+	width := 120
+	bar := pb.New64(r.Size).
+		Prefix(prefix).
+		SetRefreshRate(time.Second * 1).
+		SetWidth(width).
+		SetMaxWidth(width).
+		SetUnits(pb.U_BYTES)
+	bar.ShowPercent = true
+	bar.ShowCounters = false
+	bar.ShowSpeed = false
+	bar.ShowTimeLeft = false
+	bar.ShowBar = true
+	bar.ShowFinalTime = true
+	bar.ShowElapsedTime = false
+	bar.Start()
+	defer bar.Finish()
+
 	done := make(chan bool)
 	chunks := make(chan lfu.FileChunk, bufferSize)
 	sum := int64(0)
@@ -87,6 +114,7 @@ func Copy(rpath, wpath string, opts *CopyOpts) error {
 					errL.Panicf("Could not write: %d<>%d", n, chunk.Length)
 				}
 				sum += int64(n)
+				bar.Set64(sum)
 				traceL.Printf("%s copied\t%d:%s", FmtB(sum), chunk.Number, chunk.SHA1)
 			}
 		}
