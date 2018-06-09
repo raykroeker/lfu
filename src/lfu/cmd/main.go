@@ -4,13 +4,12 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"lfu"
 	"log"
 	"net/http"
 	"os"
@@ -46,13 +45,14 @@ var options struct {
 	debug       bool
 	trace       bool
 	file        string
+	batch       int
 	buffer      int
 }
 
 var (
-	debugL = log.New(os.Stdout, "DEBUG: ", log.LstdFlags)
-	errL   = log.New(os.Stdout, "  ERR: ", log.LstdFlags)
-	traceL = log.New(os.Stdout, "TRACE: ", log.LstdFlags)
+	debugL = log.New(ioutil.Discard, "DEBUG: ", log.LstdFlags)
+	errL   = log.New(os.Stderr, "  ERR: ", log.LstdFlags)
+	traceL = log.New(ioutil.Discard, "TRACE: ", log.LstdFlags)
 )
 
 func init() {
@@ -67,8 +67,17 @@ func main() {
 	flag.BoolVar(&options.debug, "debug", false, "Enable debug logging.")
 	flag.BoolVar(&options.trace, "trace", false, "Enable trace logging.")
 	flag.StringVar(&options.file, "path", "", "File to upload.")
-	flag.IntVar(&options.buffer, "buffer", 1024*1024*128, "Read file buffer size.")
+	flag.IntVar(&options.batch, "batch", 1024*1024*128, "Read file batch (bytes) size.")
+	flag.IntVar(&options.buffer, "buffer", 1, "Read file buffer (batches to queue) size.")
 	flag.Parse()
+
+	if options.debug {
+		debugL.SetOutput(os.Stdout)
+	}
+	if options.trace {
+		debugL.SetOutput(os.Stdout)
+		traceL.SetOutput(os.Stdout)
+	}
 
 	if options.bucket == "" || options.file == "" || options.contentType == "" {
 		flag.Usage()
@@ -93,75 +102,16 @@ func main() {
 	// if err != nil {
 	// 	errL.Panicf("Cannot upload: %v", err)
 	// }
-	err = copy(filepath.Join(filepath.Dir(options.file), "f"))
+	w := filepath.Join(filepath.Dir(options.file), "f")
+	r := options.file
+	err = Copy(r, w, &CopyOpts{
+		Resume:    false,
+		Overwrite: false,
+		Batch:     options.batch,
+		Buffer:    options.buffer,
+	})
 	if err != nil {
 		errL.Panicf("Cannot copy: %v", err)
-	}
-}
-
-func copy(path string) error {
-	t, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	debugL.Printf("Copying to: %s", path)
-
-	bufferSize := options.buffer
-	fr, err := OpenFileReader(options.file, bufferSize)
-	if err != nil {
-		return err
-	}
-	defer fr.Close()
-
-	done := make(chan bool)
-	chunks := make(chan FileChunk, 1)
-	sum := int64(0)
-	go func() {
-		for {
-			select {
-			case chunk, ok := <-chunks:
-				if !ok {
-					traceL.Printf("chunks closed")
-					done <- true
-					return
-				}
-				chunk.Sum()
-				n, err := t.Write(chunk.Bytes[0:chunk.Length])
-				if err != nil {
-					errL.Panicf("Could not write: %v", err)
-				}
-				if n != chunk.Length {
-					errL.Panicf("Could not write: %d<>%d", n, chunk.Length)
-				}
-				sum += int64(n)
-				debugL.Printf("%s copied", fmtB(sum))
-			}
-		}
-	}()
-	err = fr.Read(chunks, 0)
-	if err != nil {
-		return err
-	}
-	<-done
-	close(chunks)
-	return nil
-}
-
-func fmtB(bytes int64) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%7d B", bytes)
-	} else if bytes < (1024 * 1024) {
-		return fmt.Sprintf("%6.1f KiB", float64(bytes)/float64(1024))
-	} else if bytes < (1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f MiB", float64(bytes)/float64(1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f GiB", float64(bytes)/float64(1024*1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f TiB", float64(bytes)/float64(1024*1024*1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f PiB", float64(bytes)/float64(1024*1024*1024*1024*1024))
-	} else {
-		return fmt.Sprintf("%7d B", bytes)
 	}
 }
 
@@ -195,7 +145,7 @@ func upload(b2 *B2) error {
 	}
 
 	bufferSize := options.buffer
-	fr, err := OpenFileReader(options.file, bufferSize)
+	fr, err := lfu.OpenFileReader(options.file, bufferSize)
 	if err != nil {
 		return err
 	}
@@ -213,11 +163,11 @@ func upload(b2 *B2) error {
 	}()
 
 	workers := 16
-	uploads := make(chan FileChunk, workers*2)
+	uploads := make(chan lfu.FileChunk, workers*2)
 	go func() {
 		ticker := time.NewTicker(time.Second * 5)
 		defer ticker.Stop()
-		var stats FileStats
+		var stats lfu.FileStats
 		for {
 			select {
 			case chunk, ok := <-uploads:
@@ -238,13 +188,13 @@ func upload(b2 *B2) error {
 					return
 				}
 				if stats.Offset > 0 {
-					debugL.Printf("Uploaded: %s %s %5.2f%%", stats.Path, fmtB(stats.Offset), float64(stats.Offset)/float64(fr.Size)*100)
+					debugL.Printf("Uploaded: %s %s %5.2f%%", stats.Path, FmtB(stats.Offset), float64(stats.Offset)/float64(fr.Size)*100)
 				}
 			}
 		}
 	}()
 
-	chunks := make(chan FileChunk, fr.Size/int64(fr.BufferSize))
+	chunks := make(chan lfu.FileChunk, fr.Size/int64(fr.ChunkSize))
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -284,7 +234,7 @@ func upload(b2 *B2) error {
 	if err != nil {
 		return err
 	}
-	traceL.Printf("file read (%s)", fmtB(fr.Size))
+	traceL.Printf("file read (%s)", FmtB(fr.Size))
 	close(chunks)
 
 	wg.Wait()
@@ -461,7 +411,7 @@ func (slf *StartLargeFile) Do(b2 *B2) error {
 type UploadPart struct {
 	Req struct{}
 	*GetUploadPartURL
-	*FileChunk
+	*lfu.FileChunk
 	Resp struct {
 		FileID        string `json:"fileId"`
 		PartNumber    string `json:"partNumber"`
@@ -549,109 +499,6 @@ func (b2 *B2) url(l string) string {
 	return fmt.Sprintf("%s/%s/%s", b2.apiURL, apiPath, l)
 }
 
-// OpenFileReader opens a file reader for a given file with a number of bytes buffer size.
-func OpenFileReader(path string, bufferSize int) (*FileReader, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	return &FileReader{
-		BufferSize:       bufferSize,
-		Path:             path,
-		Size:             fi.Size(),
-		file:             file,
-		logEveryDuration: time.Second * 3,
-	}, nil
-}
-
-// FileChunk represents a set of bytes read from the file.
-type FileChunk struct {
-	Bytes  []byte
-	Length int
-	Number int
-	SHA1   string
-	FileStats
-}
-
-func (fc *FileChunk) Sum() {
-	h := sha1.New()
-	h.Write(fc.Bytes)
-	fc.SHA1 = hex.EncodeToString(h.Sum(nil))
-}
-
-// FileStats represent a snapshot of reader stats.
-type FileStats struct {
-	Offset int64
-	Path   string
-	Start  time.Time
-}
-
-// FileReader batches bytes into numbered chunks.
-type FileReader struct {
-	BufferSize int
-	Size       int64
-	Offset     int64
-	Path       string
-
-	file             *os.File
-	logEveryDuration time.Duration
-}
-
-func (fr *FileReader) Read(chunk chan<- FileChunk, offsetN int) error {
-	_, err := fr.file.Seek(int64(offsetN*fr.BufferSize), 0)
-	if err != nil {
-		return err
-	}
-	buffer := make([]byte, fr.BufferSize)
-	bytesRead := 0
-	number := offsetN
-	var chunkStart time.Time
-	for {
-		chunkStart = time.Now()
-		bytesRead, err = fr.file.Read(buffer)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			errL.Panicf("err reading file: %s:%d %v", fr.Path, fr.Offset, err)
-		}
-		fr.Offset += int64(bytesRead)
-		number++
-		chunk <- FileChunk{
-			Bytes:  buffer,
-			Length: bytesRead,
-			Number: number,
-			FileStats: FileStats{
-				Offset: fr.Offset,
-				Path:   fr.Path,
-				Start:  chunkStart,
-			}}
-	}
-	if bytesRead > 0 {
-		fr.Offset += int64(bytesRead)
-		number++
-		chunk <- FileChunk{
-			Bytes:  buffer,
-			Length: bytesRead,
-			Number: number,
-			FileStats: FileStats{
-				Offset: fr.Offset,
-				Path:   fr.Path,
-				Start:  chunkStart,
-			}}
-	}
-	return nil
-}
-
-// Close closes the file reader.
-func (fr *FileReader) Close() error {
-	return fr.file.Close()
-}
-
 type Log struct {
 	bufferSize int64
 	file       *os.File
@@ -672,7 +519,7 @@ func OpenLog(path string, fileSize int64, bufferSize int64) (*Log, error) {
 }
 
 // Append the file chunk hash (sha1) to the log
-func (l *Log) Append(fc *FileChunk) error {
+func (l *Log) Append(fc *lfu.FileChunk) error {
 	_, err := l.file.WriteString(fmt.Sprintf("%d=%s\n", fc.Number, fc.SHA1))
 	if err != nil {
 		return err

@@ -31,9 +31,9 @@ src/vendor/github.com/cheggaaa/pb:
 get: src/vendor/golang.org/x/sys src/vendor/github.com/mattn/go-runewidth src/vendor/github.com/cheggaaa/pb
 
 bin/darwin/$(BIN):
-	@GOPATH=$(GOPATH) GOOS=darwin go build -o bin/darwin/$(BIN) $(PKG)/...
+	@GOPATH=$(GOPATH) GOOS=darwin go build -o bin/darwin/$(BIN) $(PKG)/cmd
 
 bin/linux/$(BIN):
-	@GOPATH=$(GOPATH) GOOS=linux go build -o bin/linux/$(BIN) $(PKG)/...
+	@GOPATH=$(GOPATH) GOOS=linux go build -o bin/linux/$(BIN) $(PKG)/cmd
 
 build: bin/darwin/$(BIN) bin/linux/$(BIN)
