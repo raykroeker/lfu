@@ -19,27 +19,9 @@ type CopyOpts struct {
 	Buffer    int  // Number of batches to queue on read.
 }
 
-// FmtB formats bytes as a human readable constant width string.
-func FmtB(bytes int64) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%7d B", bytes)
-	} else if bytes < (1024 * 1024) {
-		return fmt.Sprintf("%6.1f KiB", float64(bytes)/float64(1024))
-	} else if bytes < (1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f MiB", float64(bytes)/float64(1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f GiB", float64(bytes)/float64(1024*1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f TiB", float64(bytes)/float64(1024*1024*1024*1024))
-	} else if bytes < (1024 * 1024 * 1024 * 1024 * 1024 * 1024) {
-		return fmt.Sprintf("%6.1f PiB", float64(bytes)/float64(1024*1024*1024*1024*1024))
-	}
-	panic(fmt.Sprintf("%d B (overflow int64)", bytes))
-}
-
 // Copy a file from one path to another.
-func Copy(rpath, wpath string, opts *CopyOpts) error {
-	batchSize, bufferSize := opts.Batch, opts.Buffer
+func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
+	batchSize, bufferSize, overwrite, resume := opts.Batch, opts.Buffer, opts.Overwrite, opts.Resume
 
 	wff := os.O_WRONLY | os.O_SYNC
 	traceL.Printf("set:O_WRONLY | os.O_SYNC")
@@ -50,8 +32,8 @@ func Copy(rpath, wpath string, opts *CopyOpts) error {
 			wff |= os.O_CREATE
 		}
 	} else {
-		if opts.Overwrite {
-			if !opts.Resume {
+		if overwrite {
+			if !resume {
 				traceL.Printf("set:O_TRUNC")
 				wff |= os.O_TRUNC
 			}
@@ -71,10 +53,16 @@ func Copy(rpath, wpath string, opts *CopyOpts) error {
 	}
 	defer r.Close()
 
+	l, err := lfu.OpenLogWriter(lpath, r.Size, int64(bufferSize))
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+
 	prefix := fmt.Sprintf("%s x %d (%s) %s ",
-		FmtB(int64(opts.Batch)),
-		opts.Buffer,
-		strings.TrimSpace(FmtB(r.Size)),
+		lfu.FmtB(int64(batchSize)),
+		bufferSize,
+		strings.TrimSpace(lfu.FmtB(r.Size)),
 		filepath.Base(rpath))
 	width := 120
 	bar := pb.New64(r.Size).
@@ -115,7 +103,8 @@ func Copy(rpath, wpath string, opts *CopyOpts) error {
 				}
 				sum += int64(n)
 				bar.Set64(sum)
-				traceL.Printf("%s copied\t%d:%s", FmtB(sum), chunk.Number, chunk.SHA1)
+				traceL.Printf("%s copied\t%d:%s", lfu.FmtB(sum), chunk.Number, chunk.SHA1)
+				l.Append(&chunk)
 			}
 		}
 	}()

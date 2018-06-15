@@ -2,16 +2,18 @@ package lfu
 
 import (
 	"io"
+	"net/http"
 	"os"
 	"time"
 )
 
 // FileReader batches bytes into numbered chunks.
 type FileReader struct {
-	ChunkSize int
-	Size      int64
-	Offset    int64
-	Path      string
+	ChunkSize   int
+	ContentType string
+	Size        int64
+	Offset      int64
+	Path        string
 
 	file             *os.File
 	logEveryDuration time.Duration
@@ -27,8 +29,18 @@ func OpenFileReader(path string, chunkSize int) (*FileReader, error) {
 	if err != nil {
 		return nil, err
 	}
+	buf := make([]byte, 512)
+	_, err = file.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	_, err = file.Seek(0, os.SEEK_SET)
+	if err != nil {
+		return nil, err
+	}
 	return &FileReader{
 		ChunkSize:        chunkSize,
+		ContentType:      http.DetectContentType(buf),
 		Path:             path,
 		Size:             fi.Size(),
 		file:             file,
