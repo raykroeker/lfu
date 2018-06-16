@@ -9,8 +9,12 @@ import (
 	"lfu"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/cheggaaa/pb"
 )
 
 const (
@@ -35,17 +39,16 @@ type Options struct {
 }
 
 var (
-	debugL log.Logger
-	errL   log.Logger
-	traceL log.Logger
+	debugL = log.New(ioutil.Discard, "DEBUG", log.LstdFlags)
+	traceL = log.New(ioutil.Discard, "TRACE", log.LstdFlags)
+	errL   = log.New(ioutil.Discard, "ERROR", log.LstdFlags)
 )
 
 func Upload(rpath, lpath string, opts *Options) error {
 	// todo move bucket from option to top level argument
 	bucket, batchSize, bufferSize := opts.Bucket, opts.Batch, opts.Buffer
 	c := &client{
-		hc:      &http.Client{},
-		options: opts,
+		hc: &http.Client{},
 		authn: authn{
 			apiURL:        opts.APIURL,
 			accountID:     opts.AccountID,
@@ -102,50 +105,41 @@ func Upload(rpath, lpath string, opts *Options) error {
 		return err
 	}
 
-	workers := 16
-	uploads := make(chan lfu.FileChunk, workers*2)
-	go func() {
-		ticker := time.NewTicker(time.Second * 5)
-		defer ticker.Stop()
-		var stats lfu.FileStats
-		for {
-			select {
-			case chunk, ok := <-uploads:
-				if !ok {
-					traceL.Printf("uploads closed")
-					ticker.Stop()
-				}
-				err := lw.Append(&chunk)
-				if err != nil {
-					errL.Panicf("Cannot append chunk to log: %v", err)
-				}
-				if chunk.FileStats.Offset > stats.Offset {
-					stats = chunk.FileStats
-				}
-			case _, ok := <-ticker.C:
-				if !ok {
-					traceL.Printf("ticker stopped (closed)")
-					return
-				}
-				if stats.Offset > 0 {
-					debugL.Printf("Uploaded: %s %s %5.2f%%", stats.Path, lfu.FmtB(stats.Offset), float64(stats.Offset)/float64(fr.Size)*100)
-				}
-			}
-		}
-	}()
+	prefix := fmt.Sprintf("%s x %d (%s) %s ",
+		lfu.FmtB(int64(batchSize)),
+		bufferSize,
+		strings.TrimSpace(lfu.FmtB(fr.Size)),
+		filepath.Base(rpath))
+	width := 120
+	bar := pb.New64(fr.Size).
+		Prefix(prefix).
+		SetRefreshRate(time.Second * 1).
+		SetWidth(width).
+		SetMaxWidth(width).
+		SetUnits(pb.U_BYTES)
+	bar.ShowPercent = true
+	bar.ShowCounters = false
+	bar.ShowSpeed = false
+	bar.ShowTimeLeft = false
+	bar.ShowBar = true
+	bar.ShowFinalTime = true
+	bar.ShowElapsedTime = false
+	bar.Start()
+	defer bar.Finish()
 
-	chunks := make(chan lfu.FileChunk, fr.Size/int64(fr.ChunkSize))
+	workers := 8
+	chunks := make(chan lfu.FileChunk, bufferSize*workers)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(tid int) {
+		go func(wid int) {
 			defer wg.Done()
 
 			gupu := &GetUploadPartURL{}
 			gupu.Req.FileID = slf.Resp.FileID
 			err := gupu.Do(c)
 			if err != nil {
-				errL.Panicf("unable to get upload url: thread_id=%d: %v", tid, err)
+				errL.Panicf("unable to get upload url: worker_id=%d: %v", wid, err)
 			}
 			for {
 				select {
@@ -161,10 +155,10 @@ func Upload(rpath, lpath string, opts *Options) error {
 					up.FileChunk = &chunk
 					err := up.Do(c)
 					if err != nil {
-						errL.Panicf("Unable to upload chunk: thread_id=%d part_number=%d: %v", tid, chunk.Number, err)
+						errL.Panicf("Unable to upload chunk: worker_id=%d part_number=%d: %v", wid, chunk.Number, err)
 					}
-
-					uploads <- chunk
+					lw.Append(&chunk)
+					bar.Add(chunk.Length)
 				}
 			}
 		}(i)
@@ -174,21 +168,18 @@ func Upload(rpath, lpath string, opts *Options) error {
 	if err != nil {
 		return err
 	}
-	traceL.Printf("file read (%s)", lfu.FmtB(fr.Size))
-
 	wg.Wait()
-	close(uploads)
 
-	flf := &FinishLargeFile{}
-	flf.Req.FileID = slf.Resp.FileID
-	flf.Req.SHA1, err = lw.ToStrings()
-	if err != nil {
-		return err
-	}
-	err = flf.Do(c)
-	if err != nil {
-		return err
-	}
+	// flf := &FinishLargeFile{}
+	// flf.Req.FileID = slf.Resp.FileID
+	// flf.Req.SHA1, err = lw.ToStrings()
+	// if err != nil {
+	// 	return err
+	// }
+	// err = flf.Do(c)
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }
@@ -205,8 +196,7 @@ type authn struct {
 }
 
 type client struct {
-	hc      *http.Client
-	options *Options
+	hc *http.Client
 	session
 	authn
 }

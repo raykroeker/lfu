@@ -16,7 +16,7 @@ type UploadPart struct {
 	*lfu.FileChunk
 	Resp struct {
 		FileID        string `json:"fileId"`
-		PartNumber    string `json:"partNumber"`
+		PartNumber    int    `json:"partNumber"`
 		ContentLength int    `json:"contentLength"`
 		ContentSHA1   string `json:"contentSha1"`
 	}
