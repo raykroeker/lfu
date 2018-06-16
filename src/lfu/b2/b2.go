@@ -36,6 +36,7 @@ type Options struct {
 	Batch         int    // Number of bytes to batch on read.
 	Bucket        string // Target bucket to upload into.
 	Buffer        int    // Number of batches to queue on read.
+	Workers       int    // Number of concurrent uploads.
 }
 
 var (
@@ -46,7 +47,7 @@ var (
 
 func Upload(rpath, lpath string, opts *Options) error {
 	// todo move bucket from option to top level argument
-	bucket, batchSize, bufferSize := opts.Bucket, opts.Batch, opts.Buffer
+	bucket, batchSize, bufferSize, workers := opts.Bucket, opts.Batch, opts.Buffer, opts.Workers
 	c := &client{
 		hc: &http.Client{},
 		authn: authn{
@@ -127,7 +128,6 @@ func Upload(rpath, lpath string, opts *Options) error {
 	bar.Start()
 	defer bar.Finish()
 
-	workers := 8
 	chunks := make(chan lfu.FileChunk, bufferSize*workers)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -170,16 +170,16 @@ func Upload(rpath, lpath string, opts *Options) error {
 	}
 	wg.Wait()
 
-	// flf := &FinishLargeFile{}
-	// flf.Req.FileID = slf.Resp.FileID
-	// flf.Req.SHA1, err = lw.ToStrings()
-	// if err != nil {
-	// 	return err
-	// }
-	// err = flf.Do(c)
-	// if err != nil {
-	// 	return err
-	// }
+	flf := &FinishLargeFile{}
+	flf.Req.FileID = slf.Resp.FileID
+	flf.Req.SHA1, err = lw.ToStrings()
+	if err != nil {
+		return err
+	}
+	err = flf.Do(c)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

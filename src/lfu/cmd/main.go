@@ -27,6 +27,7 @@ var options struct {
 	file        string
 	batch       int
 	buffer      int
+	workers     int
 }
 
 var (
@@ -49,6 +50,7 @@ func main() {
 	flag.StringVar(&options.file, "path", "", "File to upload.")
 	flag.IntVar(&options.batch, "batch", 1024*1024*128, "Read file batch (bytes) size.")
 	flag.IntVar(&options.buffer, "buffer", 1, "Read file buffer (batches to queue) size.")
+	flag.IntVar(&options.workers, "workers", 1, "Concurrent workers.")
 	flag.Parse()
 
 	if options.debug {
@@ -89,6 +91,7 @@ func main() {
 		Batch:         options.batch,
 		Bucket:        options.bucket,
 		Buffer:        options.buffer,
+		Workers:       options.workers,
 	})
 	if err != nil {
 		errL.Panicf("Cannot upload: %v", err)
