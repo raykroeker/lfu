@@ -19,15 +19,14 @@ var environment struct {
 }
 
 var options struct {
-	api         string
-	bucket      string
-	contentType string
-	debug       bool
-	trace       bool
-	file        string
-	batch       int
-	buffer      int
-	workers     int
+	api     string
+	bucket  string
+	debug   bool
+	trace   bool
+	file    string
+	batch   int
+	buffer  int
+	workers int
 }
 
 var (
@@ -44,7 +43,6 @@ func init() {
 func main() {
 	flag.StringVar(&options.api, "api", "https://api.backblazeb2.com", "API Endpoint")
 	flag.StringVar(&options.bucket, "bucket", "", "The bucket into which the file will be uploaded.")
-	flag.StringVar(&options.contentType, "content-type", "", "The file content (mime) type.")
 	flag.BoolVar(&options.debug, "debug", false, "Enable debug logging.")
 	flag.BoolVar(&options.trace, "trace", false, "Enable trace logging.")
 	flag.StringVar(&options.file, "path", "", "File to upload.")
@@ -61,7 +59,7 @@ func main() {
 		traceL.SetOutput(os.Stdout)
 	}
 
-	if options.bucket == "" || options.file == "" || options.contentType == "" {
+	if options.bucket == "" || options.file == "" {
 		flag.Usage()
 		os.Exit(1)
 	}
