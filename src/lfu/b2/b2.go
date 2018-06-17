@@ -80,22 +80,17 @@ func Upload(rpath, lpath string, opts *Options) error {
 	}
 	debugL.Printf("bucket=%#v", b)
 
+	lw, err := lfu.OpenLogWriter(lpath, 1024*1024)
+	if err != nil {
+		return err
+	}
+	defer lw.Close()
+
 	fr, err := lfu.OpenFileReader(rpath, batchSize)
 	if err != nil {
 		return err
 	}
 	defer fr.Close()
-
-	lw, err := lfu.OpenLogWriter(lpath, fr.Size, int64(bufferSize))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err := lw.Close()
-		if err != nil {
-			errL.Printf("Cannot close log: %v", err)
-		}
-	}()
 
 	slf := &StartLargeFile{}
 	slf.Req.BucketID = b.BucketID

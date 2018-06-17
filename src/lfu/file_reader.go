@@ -49,20 +49,19 @@ func OpenFileReader(path string, chunkSize int) (*FileReader, error) {
 }
 
 // Read collects chunks from disk and emits them onto the channel and closes on return.
-func (fr *FileReader) Read(ch chan<- FileChunk, offsetN int) error {
+func (fr *FileReader) Read(ch chan<- FileChunk, offset int64) error {
 	defer close(ch)
 
-	_, err := fr.file.Seek(int64(offsetN*fr.ChunkSize), os.SEEK_SET)
+	var err error
+	fr.Offset, err = fr.file.Seek(int64(offset), os.SEEK_SET)
 	if err != nil {
 		return err
 	}
 
 	buffer := make([]byte, fr.ChunkSize)
 	bytesRead := 0
-	number := offsetN
-	var chunkStart time.Time
+	number := 0
 	for {
-		chunkStart = time.Now()
 		bytesRead, err := fr.file.Read(buffer)
 		if err != nil {
 			if err == io.EOF {
@@ -75,12 +74,9 @@ func (fr *FileReader) Read(ch chan<- FileChunk, offsetN int) error {
 		ch <- FileChunk{
 			Bytes:  buffer,
 			Length: bytesRead,
+			Offset: fr.Offset,
 			Number: number,
-			FileStats: FileStats{
-				Offset: fr.Offset,
-				Path:   fr.Path,
-				Start:  chunkStart,
-			}}
+		}
 		buffer = make([]byte, fr.ChunkSize)
 	}
 	if bytesRead > 0 {
@@ -90,11 +86,8 @@ func (fr *FileReader) Read(ch chan<- FileChunk, offsetN int) error {
 			Bytes:  buffer,
 			Length: bytesRead,
 			Number: number,
-			FileStats: FileStats{
-				Offset: fr.Offset,
-				Path:   fr.Path,
-				Start:  chunkStart,
-			}}
+			Offset: fr.Offset,
+		}
 		buffer = nil
 	}
 	return nil

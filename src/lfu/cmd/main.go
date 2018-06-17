@@ -4,7 +4,6 @@ package main
 import (
 	"flag"
 	"io/ioutil"
-	"lfu/b2"
 	"log"
 	"os"
 	"path/filepath"
@@ -47,7 +46,7 @@ func main() {
 	flag.BoolVar(&options.trace, "trace", false, "Enable trace logging.")
 	flag.StringVar(&options.file, "path", "", "File to upload.")
 	flag.IntVar(&options.batch, "batch", 1024*1024*128, "Read file batch (bytes) size.")
-	flag.IntVar(&options.buffer, "buffer", 1, "Read file buffer (batches to queue) size.")
+	flag.IntVar(&options.buffer, "buffer", 2, "Read file buffer (batches to queue) size.")
 	flag.IntVar(&options.workers, "workers", 1, "Concurrent workers.")
 	flag.Parse()
 
@@ -73,24 +72,26 @@ func main() {
 		debugL.Printf("Duration: %s", time.Since(start))
 	}()
 
-	// w := filepath.Join(filepath.Dir(options.file), "f")
+	w := filepath.Join(filepath.Dir(options.file), "f")
 	l := filepath.Join(filepath.Dir(options.file), "l")
 	r := options.file
-	// err = Copy(r, w, l, &CopyOpts{
-	// 	Resume:    false,
-	// 	Overwrite: false,
-	// 	Batch:     options.batch,
-	// 	Buffer:    options.buffer,
-	// })
-	err := b2.Upload(r, l, &b2.Options{
-		AccountID:     environment.authn.accountID,
-		APIURL:        options.api,
-		ApplicationID: environment.authn.applicationID,
-		Batch:         options.batch,
-		Bucket:        options.bucket,
-		Buffer:        options.buffer,
-		Workers:       options.workers,
+	var err error
+	err = Copy(r, w, l, &CopyOpts{
+		Resume:    false,
+		Overwrite: false,
+		Batch:     options.batch,
+		Buffer:    options.buffer,
 	})
+	// err = b2.Upload(r, l, &b2.Options{
+	// 	AccountID:     environment.authn.accountID,
+	// 	APIURL:        options.api,
+	// 	ApplicationID: environment.authn.applicationID,
+	// 	Batch:         options.batch,
+	// 	Bucket:        options.bucket,
+	// 	Buffer:        options.buffer,
+	// 	Workers:       options.workers,
+	// })
+
 	if err != nil {
 		errL.Panicf("Cannot upload: %v", err)
 	}

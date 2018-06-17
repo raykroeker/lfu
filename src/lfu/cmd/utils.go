@@ -47,17 +47,17 @@ func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
 	}
 	defer w.Close()
 
+	l, err := lfu.OpenLogWriter(lpath, 1024*1024)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+
 	r, err := lfu.OpenFileReader(rpath, batchSize)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-
-	l, err := lfu.OpenLogWriter(lpath, r.Size, int64(bufferSize))
-	if err != nil {
-		return err
-	}
-	defer l.Close()
 
 	prefix := fmt.Sprintf("%s x %d (%s) %s ",
 		lfu.FmtB(int64(batchSize)),
@@ -83,7 +83,6 @@ func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
 
 	done := make(chan bool)
 	chunks := make(chan lfu.FileChunk, bufferSize)
-	sum := int64(0)
 	go func() {
 		for {
 			select {
@@ -101,10 +100,8 @@ func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
 				if n != chunk.Length {
 					errL.Panicf("Could not write: %d<>%d", n, chunk.Length)
 				}
-				sum += int64(n)
-				bar.Set64(sum)
-				traceL.Printf("%s copied\t%d:%s", lfu.FmtB(sum), chunk.Number, chunk.SHA1)
 				l.Append(&chunk)
+				bar.Add(chunk.Length)
 			}
 		}
 	}()
