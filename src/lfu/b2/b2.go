@@ -109,6 +109,7 @@ func Upload(rpath, lpath string, opts *Options) error {
 	width := 120
 	bar := pb.New64(fr.Size).
 		Prefix(prefix).
+		Set64(lw.Offset()).
 		SetRefreshRate(time.Second * 1).
 		SetWidth(width).
 		SetMaxWidth(width).
@@ -159,7 +160,7 @@ func Upload(rpath, lpath string, opts *Options) error {
 		}(i)
 	}
 
-	err = fr.Read(chunks, 0)
+	err = fr.Read(chunks, lw.Offset())
 	if err != nil {
 		return err
 	}

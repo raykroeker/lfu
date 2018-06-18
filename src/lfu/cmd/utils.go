@@ -67,6 +67,7 @@ func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
 	width := 120
 	bar := pb.New64(r.Size).
 		Prefix(prefix).
+		Set64(l.Offset()).
 		SetRefreshRate(time.Second * 1).
 		SetWidth(width).
 		SetMaxWidth(width).
@@ -106,7 +107,7 @@ func Copy(rpath, wpath, lpath string, opts *CopyOpts) error {
 		}
 	}()
 	debugL.Printf("Copy: %s>%s", rpath, wpath)
-	err = r.Read(chunks, 0)
+	err = r.Read(chunks, l.Offset())
 	if err != nil {
 		return err
 	}

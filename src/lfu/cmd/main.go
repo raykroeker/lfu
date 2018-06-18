@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"io/ioutil"
+	"lfu/b2"
 	"log"
 	"os"
 	"path/filepath"
@@ -72,26 +73,25 @@ func main() {
 		debugL.Printf("Duration: %s", time.Since(start))
 	}()
 
-	w := filepath.Join(filepath.Dir(options.file), "f")
+	// w := filepath.Join(filepath.Dir(options.file), "f")
 	l := filepath.Join(filepath.Dir(options.file), "l")
 	r := options.file
 	var err error
-	err = Copy(r, w, l, &CopyOpts{
-		Resume:    false,
-		Overwrite: false,
-		Batch:     options.batch,
-		Buffer:    options.buffer,
-	})
-	// err = b2.Upload(r, l, &b2.Options{
-	// 	AccountID:     environment.authn.accountID,
-	// 	APIURL:        options.api,
-	// 	ApplicationID: environment.authn.applicationID,
-	// 	Batch:         options.batch,
-	// 	Bucket:        options.bucket,
-	// 	Buffer:        options.buffer,
-	// 	Workers:       options.workers,
+	// err = Copy(r, w, l, &CopyOpts{
+	// 	Resume:    false,
+	// 	Overwrite: false,
+	// 	Batch:     options.batch,
+	// 	Buffer:    options.buffer,
 	// })
-
+	err = b2.Upload(r, l, &b2.Options{
+		AccountID:     environment.authn.accountID,
+		APIURL:        options.api,
+		ApplicationID: environment.authn.applicationID,
+		Batch:         options.batch,
+		Bucket:        options.bucket,
+		Buffer:        options.buffer,
+		Workers:       options.workers,
+	})
 	if err != nil {
 		errL.Panicf("Cannot upload: %v", err)
 	}

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"sync"
+	"time"
 )
 
 const (
@@ -15,9 +17,11 @@ const (
 )
 
 type LogWriter struct {
+	sync.RWMutex
 	file     *os.File
 	fileSize int64
 	entries  int
+	offset   int64
 	min      int
 	max      int
 	writer   *bufio.Writer
@@ -25,19 +29,56 @@ type LogWriter struct {
 
 func OpenLogWriter(path string, buffer int) (*LogWriter, error) {
 	// file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_SYNC, 0600)
+	fi, err := os.Stat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err
 	}
 
-	return &LogWriter{
+	offset := int64(0)
+	if fi != nil && fi.Size() > 0 {
+		logOffset := fi.Size() - logEntrySize
+		buf := make([]byte, logEntrySize)
+		_, err := file.ReadAt(buf, logOffset)
+		if err != nil {
+			return nil, err
+		}
+		_, err = file.Seek(logOffset, os.SEEK_SET)
+		if err != nil {
+			return nil, err
+		}
+		_, offset, _, _ = decode(buf)
+	}
+
+	lw := &LogWriter{
 		file:   file,
+		offset: offset,
 		writer: bufio.NewWriterSize(file, buffer),
-	}, nil
+	}
+	go func() {
+		for {
+			select {
+			case <-time.After(time.Second * 1):
+				lw.Lock()
+				lw.writer.Flush()
+				lw.Unlock()
+			}
+		}
+	}()
+	return lw, nil
 }
 
 // Append the file chunk hash (sha1) to the log
 func (l *LogWriter) Append(fc *FileChunk) error {
+	l.Lock()
+	defer l.Unlock()
+
 	_, err := l.writer.Write(encode(fc))
 	if err != nil {
 		return err
@@ -53,13 +94,23 @@ func (l *LogWriter) Append(fc *FileChunk) error {
 }
 
 func (l *LogWriter) Close() error {
+	l.Lock()
+	defer l.Unlock()
+
 	if err := l.writer.Flush(); err != nil {
 		l.file.Close()
 	}
 	return l.file.Close()
 }
 
+func (l *LogWriter) Offset() int64 {
+	return l.offset
+}
+
 func (l *LogWriter) ToStrings() ([]string, error) {
+	l.RLock()
+	defer l.RUnlock()
+
 	err := l.file.Sync()
 	if err != nil {
 		return nil, err

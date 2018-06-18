@@ -53,7 +53,7 @@ func (fr *FileReader) Read(ch chan<- FileChunk, offset int64) error {
 	defer close(ch)
 
 	var err error
-	fr.Offset, err = fr.file.Seek(int64(offset), os.SEEK_SET)
+	fr.Offset, err = fr.file.Seek(offset, os.SEEK_SET)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package b2
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -33,7 +34,7 @@ func (up *UploadPart) Do(c *client) error {
 	httpReq.Header.Add(hnAuthz, up.GetUploadPartURL.Resp.AuthorizationToken)
 	httpReq.Header.Add(hnPart, fmt.Sprintf("%d", up.FileChunk.Number))
 	httpReq.Header.Add(hnContentLength, fmt.Sprintf("%d", up.FileChunk.Length))
-	httpReq.Header.Add(hnSha1, up.FileChunk.SHA1)
+	httpReq.Header.Add(hnSha1, hex.EncodeToString(up.FileChunk.SHA1))
 	httpResp, err := c.hc.Do(httpReq)
 	if err != nil {
 		return err
