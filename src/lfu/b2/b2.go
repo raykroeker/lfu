@@ -9,6 +9,7 @@ import (
 	"lfu"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,9 +41,9 @@ type Options struct {
 }
 
 var (
-	debugL = log.New(ioutil.Discard, "DEBUG", log.LstdFlags)
-	traceL = log.New(ioutil.Discard, "TRACE", log.LstdFlags)
-	errL   = log.New(ioutil.Discard, "ERROR", log.LstdFlags)
+	debugL = log.New(ioutil.Discard, "DEBUG ", log.LstdFlags)
+	traceL = log.New(ioutil.Discard, "TRACE ", log.LstdFlags)
+	errL   = log.New(os.Stdout, "ERROR ", log.LstdFlags)
 )
 
 func Upload(rpath, lpath string, opts *Options) error {
@@ -124,16 +125,17 @@ func Upload(rpath, lpath string, opts *Options) error {
 	bar.Start()
 	defer bar.Finish()
 
-	chunks := make(chan lfu.FileChunk, bufferSize*workers)
+	chunks := make(chan lfu.FileChunk, bufferSize*workers*2)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(wid int) {
 			defer wg.Done()
 
+			wc := c.clone()
 			gupu := &GetUploadPartURL{}
 			gupu.Req.FileID = slf.Resp.FileID
-			err := gupu.Do(c)
+			err := gupu.Do(wc)
 			if err != nil {
 				errL.Panicf("unable to get upload url: worker_id=%d: %v", wid, err)
 			}
@@ -149,12 +151,17 @@ func Upload(rpath, lpath string, opts *Options) error {
 					up := &UploadPart{}
 					up.GetUploadPartURL = gupu
 					up.FileChunk = &chunk
-					err := up.Do(c)
-					if err != nil {
-						errL.Panicf("Unable to upload chunk: worker_id=%d part_number=%d: %v", wid, chunk.Number, err)
+					for {
+						err := up.Do(wc)
+						if err != nil {
+							time.Sleep(time.Millisecond * 500)
+							errL.Printf("Unable to upload chunk: worker_id=%d part_number=%d: %v", wid, chunk.Number, err)
+							continue
+						}
+						lw.Append(&chunk)
+						bar.Add(chunk.Length)
+						break
 					}
-					lw.Append(&chunk)
-					bar.Add(chunk.Length)
 				}
 			}
 		}(i)
@@ -195,6 +202,14 @@ type client struct {
 	hc *http.Client
 	session
 	authn
+}
+
+func (c *client) clone() *client {
+	return &client{
+		hc:      &http.Client{},
+		authn:   c.authn,
+		session: c.session,
+	}
 }
 
 // url builds a url string for the rpc call
