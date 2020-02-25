@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cheggaaa/pb"
@@ -37,18 +36,17 @@ type Options struct {
 	Batch         int    // Number of bytes to batch on read.
 	Bucket        string // Target bucket to upload into.
 	Buffer        int    // Number of batches to queue on read.
-	Workers       int    // Number of concurrent uploads.
 }
 
 var (
-	debugL = log.New(ioutil.Discard, "DEBUG ", log.LstdFlags)
+	debugL = log.New(os.Stdout, "DEBUG ", log.LstdFlags)
 	traceL = log.New(ioutil.Discard, "TRACE ", log.LstdFlags)
 	errL   = log.New(os.Stdout, "ERROR ", log.LstdFlags)
 )
 
 func Upload(rpath, lpath string, opts *Options) error {
 	// todo move bucket from option to top level argument
-	bucket, batchSize, bufferSize, workers := opts.Bucket, opts.Batch, opts.Buffer, opts.Workers
+	bucket, batchSize, bufferSize := opts.Bucket, opts.Batch, opts.Buffer
 	c := &client{
 		hc: &http.Client{},
 		authn: authn{
@@ -93,14 +91,14 @@ func Upload(rpath, lpath string, opts *Options) error {
 	}
 	defer fr.Close()
 
-	slf := &StartLargeFile{}
-	slf.Req.BucketID = b.BucketID
-	slf.Req.ContentType = fr.ContentType
-	slf.Req.FileName = rpath
-	err = slf.Do(c)
-	if err != nil {
-		return err
-	}
+	// slf := &StartLargeFile{}
+	// slf.Req.BucketID = b.BucketID
+	// slf.Req.ContentType = fr.ContentType
+	// slf.Req.FileName = rpath
+	// err = slf.Do(c)
+	// if err != nil {
+	// 	return err
+	// }
 
 	prefix := fmt.Sprintf("%s x %d (%s) %s ",
 		lfu.FmtB(int64(batchSize)),
@@ -125,64 +123,76 @@ func Upload(rpath, lpath string, opts *Options) error {
 	bar.Start()
 	defer bar.Finish()
 
-	chunks := make(chan lfu.FileChunk, bufferSize*workers*2)
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(wid int) {
-			defer wg.Done()
+	partSize := int64(5 * 1024 * 1024 * 1024)
+	partCount := int(fr.Size / partSize)
+	parts := make([]*lfu.FilePart, partCount)
 
-			wc := c.clone()
-			gupu := &GetUploadPartURL{}
-			gupu.Req.FileID = slf.Resp.FileID
-			err := gupu.Do(wc)
-			if err != nil {
-				errL.Panicf("unable to get upload url: worker_id=%d: %v", wid, err)
-			}
-			for {
-				select {
-				case chunk, ok := <-chunks:
-					if !ok {
-						traceL.Printf("chunks closed")
-						return
+	rdir := filepath.Dir(rpath)
+	rbase := filepath.Base(rpath)
+	for i := 0; i < partCount; i++ {
+		n := i + 1
+		parts[i] = &lfu.FilePart{
+			Path:   filepath.Join(rdir, fmt.Sprintf(".%s-%03d", strings.Split(rbase, ".")[0], n)),
+			Number: n,
+		}
+	}
+	debugL.Printf("part size: %s part count: %d", lfu.FmtB(partSize), partCount)
+
+	// a single consumer of file chunks will write to file part then emit the file part on completion
+	chunks := make(chan lfu.FileChunk, 2)
+	go func() {
+		var current, previous *lfu.FilePart
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					debugL.Printf("close part: %s", current)
+					err := current.Close()
+					if err != nil {
+						errL.Panicf("unable to close part: %s: %v", current, err)
 					}
-					chunk.Sum()
-
-					up := &UploadPart{}
-					up.GetUploadPartURL = gupu
-					up.FileChunk = &chunk
-					for {
-						err := up.Do(wc)
+					return
+				}
+				current = parts[fr.Size/chunk.Offset]
+				if current != previous {
+					if previous != nil {
+						debugL.Printf("close part: %s", previous)
+						err := previous.Close()
 						if err != nil {
-							time.Sleep(time.Millisecond * 500)
-							errL.Printf("Unable to upload chunk: worker_id=%d part_number=%d: %v", wid, chunk.Number, err)
-							continue
+							errL.Panicf("unable to close part: %s: %v", previous, err)
 						}
-						lw.Append(&chunk)
-						bar.Add(chunk.Length)
-						break
+					}
+					debugL.Printf("open part: %s", current)
+					err = current.OpenWriter()
+					if err != nil {
+						errL.Panicf("unable to open part: %s: %v", current, err)
 					}
 				}
+				err := current.Write(&chunk)
+				if err != nil {
+					errL.Panicf("unable to write chunk to part: %s: %s: %v", chunk, current, err)
+				}
+				bar.Add(chunk.Length)
+				previous = current
 			}
-		}(i)
-	}
+		}
+	}()
 
 	err = fr.Read(chunks, lw.Offset())
 	if err != nil {
 		return err
 	}
-	wg.Wait()
 
-	flf := &FinishLargeFile{}
-	flf.Req.FileID = slf.Resp.FileID
-	flf.Req.SHA1, err = lw.ToStrings()
-	if err != nil {
-		return err
-	}
-	err = flf.Do(c)
-	if err != nil {
-		return err
-	}
+	// flf := &FinishLargeFile{}
+	// flf.Req.FileID = slf.Resp.FileID
+	// flf.Req.SHA1, err = lw.ToStrings()
+	// if err != nil {
+	// 	return err
+	// }
+	// err = flf.Do(c)
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }

@@ -2,6 +2,7 @@ package lfu
 
 import (
 	"crypto/sha1"
+	"fmt"
 )
 
 // FileChunk represents a set of bytes read from the file.
@@ -18,4 +19,8 @@ func (fc *FileChunk) Sum() {
 	h := sha1.New()
 	h.Write(fc.Bytes)
 	fc.SHA1 = h.Sum(nil)
+}
+
+func (fc FileChunk) String() string {
+	return fmt.Sprintf("number: %d offset: %d length: %d", fc.Number, fc.Offset, fc.Length)
 }

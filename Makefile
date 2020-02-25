@@ -4,6 +4,8 @@ ROOT    := $(shell pwd)
 SRC     := $(shell find src -type f)
 VERSION := 0.0.1
 
+# make clean build && cp bin/linux/lfu /Volumes/Public/
+
 GOPATH  := $(ROOT)
 LDFLAGS := "-X main.version=$(VERSION)"
 VENDOR  := "src/vendor"

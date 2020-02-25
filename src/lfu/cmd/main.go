@@ -90,7 +90,6 @@ func main() {
 		Batch:         options.batch,
 		Bucket:        options.bucket,
 		Buffer:        options.buffer,
-		Workers:       options.workers,
 	})
 	if err != nil {
 		errL.Panicf("Cannot upload: %v", err)
